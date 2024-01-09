@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Three.js Example</title>
+    <script async src="https://unpkg.com/es-module-shims@1.3.6/dist/es-module-shims.js"></script>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.154.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.154.0/examples/jsm/",
+          "@pixiv/three-vrm": "/lib/three-vrm.module.js"
+        }
+      }
+    </script>
+    <style>
+        body {
+            margin: 0;
+        }
+
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { BVHLoader } from 'three/addons/loaders/BVHLoader.js';
+        import { VRMLoaderPlugin, VRMUtils, VRM } from '@pixiv/three-vrm';
+
+        let mixer = null;
+        let joinSpringManager = null;
+        let currentVrm = undefined;
+        let animationClip;
+        let mapAction = new Map();
+        let currentBvhFilePath = '';
+        let currentBackgroundImage = '';
+        let playing = false;
+        let currentFacial = '';
+        const listBackground = [
+            'day',
+            'night'
+        ]
+
+
+        const parameterBlink = [
+            {
+                blink: 0,
+                blinkLeft: 1,
+                blinkRight: 1,
+            },
+            {
+                blink: 0,
+                blinkLeft: 0,
+                blinkRight: 1,
+            },
+            {
+                blink: 0.67,
+                blinkLeft: 0,
+                blinkRight: 0,
+            },
+            {
+                blink: 1,
+                blinkLeft: 0,
+                blinkRight: 0,
+            },
+            {
+                blink: 0.82,
+                blinkLeft: 0.43,
+                blinkRight: 0.43,
+            }
+        ]
+
+        const queryString = window.location.search;
+
+        const urlParams = new URLSearchParams(queryString);
+        console.log('idolCode', urlParams);
+
+        const idolCode = 'Yui_Saionji';
+        const speedAnimate = urlParams.get('speedAnimate') ? urlParams.get('speedAnimate') : 0.02;
+        const ratioAnimate = urlParams.get('ratioAnimate') ? urlParams.get('ratioAnimate') : 1;
+        console.log('idolCode', `/models/${idolCode}.vrm`);
+        console.log('speedAnimate', speedAnimate);
+        console.log('ratioAnimate', ratioAnimate);
+        // const mapBVHFile = new Map();
+        const imageFile = new Map();
+        var scene = new THREE.Scene();
+        var camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 10);
+        camera.position.set(0, 1.3, -1.45);
+        camera.rotation.set(0, Math.PI, 0);
+
+        // camera.position.set(0, 1.2, 1.25);
+        // camera.rotation.set(Math.PI, Math.PI, Math.PI);
+
+        let now = new Date(new Date().toUTCString());
+        var japanTime = addHours(now, 9);
+        let currentTypeHour = getCurrentTypeHour(japanTime);
+        updateCurrentBackground(`${idolCode}_${currentTypeHour}`);
+
+        const renderer = new THREE.WebGLRenderer({ alpha: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const targetAspect = document.body.clientWidth / document.body.clientHeight;
+ 
+        function updateCurrentBackground(name) {
+            if (currentBackgroundImage != name) {
+                if (imageFile.get(name)) {
+                    let texture = imageFile.get(name);
+                    const imageAspect = texture.image.width / texture.image.height;
+                    const factor = imageAspect / targetAspect;
+                    scene.background = texture;
+                    scene.background.offset.x = factor > 1 ? (1 - 1 / factor) / 2 : 0;
+                    scene.background.repeat.x = factor > 1 ? 1 / factor : 1;
+                    scene.background.offset.y = factor > 1 ? 0 : (1 - factor) / 2;
+                    scene.background.repeat.y = factor > 1 ? 1 : factor;
+                    currentBackgroundImage = name;
+
+                } else {
+                    new THREE.TextureLoader().load(`/img/${name}.png`, (texture) => {
+                        imageFile.set(name, texture);
+                        const imageAspect = texture.image.width / texture.image.height;
+                        const factor = imageAspect / targetAspect;
+                        scene.background = texture;
+                        scene.background.offset.x = factor > 1 ? (1 - 1 / factor) / 2 : 0;
+                        scene.background.repeat.x = factor > 1 ? 1 / factor : 1;
+                        scene.background.offset.y = factor > 1 ? 0 : (1 - factor) / 2;
+                        scene.background.repeat.y = factor > 1 ? 1 : factor;
+
+                    });
+                }
+                currentBackgroundImage = name;
+
+            }
+        }
+
+        function updateFacial(facial, currentMotion) {
+            if (currentVrm && currentVrm.expressionManager) {
+                const value = 0.35;
+                if (currentFacial != facial) {
+                    switch (facial) {
+                        case 'neutral':
+                            currentVrm.expressionManager.setValue("neutral", value);
+                            currentVrm.expressionManager.setValue("relaxed", 0);
+                            currentVrm.expressionManager.setValue("happy", 0);
+                            currentVrm.expressionManager.setValue("Surprised", 0);
+                            break;
+                        case 'relaxed':
+                            currentVrm.expressionManager.setValue("neutral", value);
+                            currentVrm.expressionManager.setValue("relaxed", 0);
+                            currentVrm.expressionManager.setValue("happy", 0);
+                            currentVrm.expressionManager.setValue("Surprised", 0);
+                            break;
+                        case 'happy':
+                            currentVrm.expressionManager.setValue("neutral", 0);
+                            currentVrm.expressionManager.setValue("relaxed", 0);
+                            currentVrm.expressionManager.setValue("happy", value);
+                            currentVrm.expressionManager.setValue("Surprised", 0);
+                            break;
+                        case 'Surprised':
+                            currentVrm.expressionManager.setValue("neutral", 0);
+                            currentVrm.expressionManager.setValue("relaxed", 0);
+                            currentVrm.expressionManager.setValue("happy", 0);
+                            currentVrm.expressionManager.setValue("Surprised", value);
+                            break;
+
+                        default:
+                            break;
+                    }
+                }
+            }
+        }
+
+
+        const light = new THREE.DirectionalLight(0xffffff);
+        light.position.set(-1, 1, -1).normalize();
+        scene.add(light);
+
+        const fold = (reducer, init, xs) => {
+            let acc = init;
+            for (const x of xs) {
+                acc = reducer(acc, x);
+            }
+            return acc;
+        };
+
+        window.addEventListener("dataDetail", (result) => {
+            try {
+                var data = result.detail;
+                
+                var currentMotion = data.motion;
+                if (currentMotion) {
+                    console.log("dataDetail", currentMotion);
+                    applyAnimation(`/bvh/${currentMotion}.bvh`);
+                }
+
+                var currentBackground = data.currentBackground;
+                if (currentBackground) {
+                    updateCurrentBackground(`${idolCode}_${currentBackground}`);
+                }
+
+                var facial = data.facial;
+                if (facial) {
+                    updateFacial(facial, currentMotion);
+                }
+             
+            } catch (e) {
+                console.log(e);
+            }
+        }, false);
+
+        window.addEventListener("startPlaying", (result) => {
+            var data = result.detail;
+
+            var mora = data.mora;
+
+            var currentTimeVoice = data.currentTime;
+            console.log('currentTimeVoice', currentTimeVoice);    
+            if (mora) {
+                playing = true;
+                Object.keys(mora).forEach(function (key, index) {
+
+                    if (parseFloat(currentTimeVoice) < parseFloat(key)) {
+                        setTimeout(() => {
+                            if (playing) {
+                                voice(mora[key]);
+                            }
+                        }, parseFloat(key) - parseFloat(currentTimeVoice));
+                    }
+                });
+            }
+            randomBlink();
+        }, false);
+
+        window.addEventListener("endPlaying", (event) => {
+            console.log('endPlaying');
+            playing = false;
+            resetBlink();
+            setTimeout(() => {
+                currentVrm.expressionManager.setValue("aa", 0);
+                currentVrm.expressionManager.setValue("ih", 0);
+                currentVrm.expressionManager.setValue("oh", 0);
+                currentVrm.expressionManager.setValue("ee", 0);
+                currentVrm.expressionManager.setValue("ou", 0);
+            }, 0);
+        }, false);
+
+
+        loadVrm();
+        function loadVrm() {
+
+            const loader = new GLTFLoader();
+
+            loader.register((parser) => {
+                return new VRMLoaderPlugin(parser);
+            });
+
+            loader.load(
+                `/models/test.vrm`,
+                
+                (gltf) => {
+                    const vrm = gltf.userData.vrm;
+                    VRMUtils.removeUnnecessaryVertices(gltf.scene);
+                    VRMUtils.removeUnnecessaryJoints(gltf.scene);
+                    vrm.scene.traverse((obj) => {
+                        obj.frustumCulled = false;
+                    });
+
+                    setupExpressionOverride(vrm);
+                    scene.add(vrm.scene);
+                    currentVrm = vrm;
+                    joinSpringManager = vrm.springBoneManager;
+                    console.log(currentVrm);
+                    joinSpringManager.joints.forEach(springBone => {
+                    const colliderGroups = springBone.colliderGroups;
+                    voice('o');
+
+                    updateFacial('Surprised', '');
+                    colliderGroups.forEach(colliderGroup => {
+                        const colliders = colliderGroup.colliders;
+                        
+                        // `colliders` is an array of `VRMSpringBoneCollider` instances
+                        // Each `VRMSpringBoneCollider` represents a collider for the spring bone
+                    });
+                    });
+
+                    if (currentVrm) {
+                        applyAnimation('/bvh/start.bvh', 'waiting');
+                    }
+                    setTimeout(() => {
+                        console.log('success');
+                    }, 3000);
+                },
+
+                (progress) => {},
+
+                (error) => console.error(error),
+            );
+        }
+
+        function setupExpressionOverride(vrm) {
+            // 表情マネージャーを取得
+            const expressionManager = vrm.expressionManager;
+
+            // 特定の表情（例：happy）のオーバーライドを none に設定
+            const expressionAa = expressionManager.getExpression('Surprised');
+            console.log(expressionAa);
+            if (expressionAa) {
+                expressionAa.overrideMouth = 'block';
+                expressionAa.overrideBlink = 'blend';
+                expressionAa.overrideLookAt = 'blend';
+            }
+           
+           
+        }
+
+        let lastBlinkTime = new Date().getTime();
+        let nextBlinkDuration = 3000;
+        let isProcessed = true;
+        let lastTimeUpdateMotion = 0;
+
+        let isFading = false;
+        let loading = false;
+        let currentAction;
+        let pendingAnimation = null;
+
+        function applyAnimation(bvhFilePath, animationName) {
+
+            if (!currentVrm) return; // VRMがロードされていなければ何もしない
+            if (currentBvhFilePath === bvhFilePath) return;
+            console.log(currentBvhFilePath);
+            if (mapAction.get(bvhFilePath)) {
+                console.log('haveFile');
+                if (!mixer) {
+                    mixer = new THREE.AnimationMixer(currentVrm.scene);
+                }
+                // const startAction = mapAction.get(currentBvhFilePath)
+                // const endAction = mapAction.get(bvhFilePath);
+                if (isFading || loading) {
+
+                    pendingAnimation = bvhFilePath;
+                    return;
+                }
+                synchronizeCrossFade(bvhFilePath, 1);
+            } else {
+                console.log('Dont`t haveFile');
+
+                loading = true;
+                const loader1 = new BVHLoader();
+                loader1.load(bvhFilePath, function (result) {
+                    for (let i = result.clip.tracks.length; i--;) {
+                        let track = result.clip.tracks[i];
+                        var value = [];
+                        if (track.name.toLowerCase().match(/.+\.([^?]+)(\?|$)/)[1] === "position") {
+                            if ([].includes(track.name)) {
+                                continue;
+                            } else {
+                                result.clip.tracks.splice(i, 1);
+                            }
+                        } else {
+                            if ([].includes(track.name)) {
+                                result.clip.tracks.splice(i, 1);
+                            } else {
+                                for (var trackValue of track.values) {
+                                    var trackValueNew = trackValue;
+                                    if (track.values.indexOf(trackValue) % 4 == 3) {
+                                        trackValueNew = -trackValue;
+                                    }
+                                    if (track.values.indexOf(trackValue) % 4 == 1) {
+                                        trackValueNew = -trackValue;
+                                    }
+                                    value.push(trackValueNew);
+                                }
+                            }
+                            track.values = value;
+                            track.values.splice(0, 4);
+                            track.times = track.times.subarray(1);
+                        }
+                    }
+       
+                    if (!mixer) {
+                        mixer = new THREE.AnimationMixer(currentVrm.scene);
+                    }
+                    animationClip = result.clip;
+                    animationClip.name = bvhFilePath;
+                    animationClip.duration = calculateDuration(result.clip);
+                    console.log('duration', animationClip.duration);
+
+                    loading = false;
+                    if (isFading || loading) {
+
+                        pendingAnimation = bvhFilePath;
+                        return;
+                    }
+                    mapAction.set(bvhFilePath, animationClip);
+
+                    synchronizeCrossFade(bvhFilePath, 1);
+                    
+                });
+            }
+            currentBvhFilePath = bvhFilePath;
+
+        }
+
+
+        function getRandomBlinkDuration() {
+            let randomDuration = 1000 + Math.floor(Math.random() * 9000);
+            return randomDuration;
+        }
+
+        function synchronizeCrossFade(bvhFilePath, duration) {
+            var currentDate = new Date().getTime();
+            if ((currentDate - lastTimeUpdateMotion) < 1000) {
+                return;
+            }
+            lastTimeUpdateMotion = currentDate;
+            console.log(new Date().toISOString());
+            // console.log("startAction", startAction);
+            const loadAndApply = (clip) => {
+                if (currentAction) {
+                    currentAction.fadeOut(duration);
+                    isFading = true;
+                    console.log(duration * 1000);
+                    setTimeout(() => {
+                        console.log('pendingAnimation');
+                        isFading = false;
+                        if (pendingAnimation) {
+                            applyAnimation(
+                                pendingAnimation,
+                                pendingAnimation.animationName
+                            );
+                            pendingAnimation = null;
+                        }
+                    }, duration * 1000);
+                }
+
+                const newAction = mixer.clipAction(clip);
+                newAction.setLoop(THREE.LoopRepeat);
+                newAction.clampWhenFinished = false;
+                console.log('playEndAction', new Date());
+                newAction.reset();
+                newAction.fadeIn(duration);
+                newAction.play();
+
+                currentAction = newAction;
+            };
+
+            if (mapAction.has(bvhFilePath)) {
+                loadAndApply(mapAction.get(bvhFilePath));
+            }
+            // if (startAction) {
+            //     startAction.fadeOut(duration);
+            //     isFading = true;
+            //     setTimeout(() => {
+            //         isFading = false;
+
+            //       if (pendingAnimation && isSameType(pendingAnimation)) {
+            //     console.log("pendingAnimation", pendingAnimation);
+
+            //         applyAnimation(
+            //             pendingAnimation
+            //         );
+            //         pendingAnimation = null;
+            //       }
+            //     }, duration * 1000);
+            // }
+            // endAction.reset();
+            // endAction.fadeIn(duration);
+            // endAction.play();
+
+            // currentAction = endAction;
+
+        }
+
+        function isSameType(pendingAnimation) {
+            var pendingNotNumber = pendingAnimation.replace(/[0-9]/g, '').replace('.bvh', '');
+            var currentNotNumber = currentBvhFilePath.replace(/[0-9]/g, '').replace('.bvh', '');
+            console.log(pendingNotNumber === currentNotNumber);
+            return pendingNotNumber === currentNotNumber;
+        }
+
+        function calculateDuration(bvhClip) {
+            const frames = bvhClip.tracks[0].times.length;
+            const frameTime = bvhClip.tracks[0].times[1] - bvhClip.tracks[0].times[0];
+            return frames * frameTime;
+        }
+
+        function voice(mora) {
+            if (currentVrm && currentVrm.expressionManager) {
+                if (mora == "a") {
+                    currentVrm.expressionManager.setValue("aa", 0.8);
+                    currentVrm.expressionManager.setValue("ih", 0);
+                    currentVrm.expressionManager.setValue("ee", 0);
+                    currentVrm.expressionManager.setValue("oh", 0);
+                    currentVrm.expressionManager.setValue("ou", 0);
+                } else if (mora == "i") {
+                    currentVrm.expressionManager.setValue("aa", 0);
+                    currentVrm.expressionManager.setValue("ih", 0.8);
+                    currentVrm.expressionManager.setValue("ee", 0);
+                    currentVrm.expressionManager.setValue("oh", 0);
+                    currentVrm.expressionManager.setValue("ou", 0);
+                } else if (mora == "e") {
+                    currentVrm.expressionManager.setValue("aa", 0);
+                    currentVrm.expressionManager.setValue("ih", 0);
+                    currentVrm.expressionManager.setValue("ee", 0.8);
+                    currentVrm.expressionManager.setValue("oh", 0);
+                    currentVrm.expressionManager.setValue("ou", 0);
+                } else if (mora == "o") {
+                    currentVrm.expressionManager.setValue("aa", 0);
+                    currentVrm.expressionManager.setValue("ih", 0);
+                    currentVrm.expressionManager.setValue("ee", 0);
+                    currentVrm.expressionManager.setValue("oh", 0.8);
+                    currentVrm.expressionManager.setValue("ou", 0);
+                } else if (mora == "u") {
+                    currentVrm.expressionManager.setValue("aa", 0);
+                    currentVrm.expressionManager.setValue("ih", 0);
+                    currentVrm.expressionManager.setValue("ee", 0);
+                    currentVrm.expressionManager.setValue("oh", 0);
+                    currentVrm.expressionManager.setValue("ou", 0.8);
+                } else {
+                    currentVrm.expressionManager.setValue("aa", 0);
+                    currentVrm.expressionManager.setValue("ih", 0);
+                    currentVrm.expressionManager.setValue("ee", 0);
+                    currentVrm.expressionManager.setValue("oh", 0);
+                    currentVrm.expressionManager.setValue("ou", 0);
+                }
+            }
+        }
+
+
+        // function animate() {
+        //     requestAnimationFrame(animate);
+        //     // AnimationMixerの更新
+        //     // let time = new Date().getTime();
+
+        //     // renderer.render(scene, camera);
+
+
+        // }
+        // animate();
+
+        function addHours(date, hours) {
+            date.setTime(date.getTime() + hours * 60 * 60 * 1000);
+
+            return date;
+        }
+
+        function getCurrentTypeHour(japanTimeNow) {
+            let currentHour = japanTimeNow.getHours();
+            if (currentHour >= 6 && currentHour < 18) {
+                return listBackground[0];
+            }
+            return listBackground[1];
+        }
+
+        function randomBlink(){
+            console.log("randomBlink",parameterBlink );
+            const randomNumber = Math.floor(Math.random() * parameterBlink.length);
+            const parameter = parameterBlink[randomNumber];
+            console.log(parameter);
+            if (currentVrm) {
+                console.log("abc");
+                console.log("blink", parameter.blink);
+                console.log("blink", parameter.blinkLeft);
+                console.log("blink", parameter.blinkRight);
+                currentVrm.expressionManager.setValue("blink", parameter.blink);
+                currentVrm.expressionManager.setValue("blinkLeft", parameter.blinkLeft);
+                currentVrm.expressionManager.setValue("blinkRight", parameter.blinkRight);
+            }
+        }
+
+        function resetBlink(){
+            const randomNumber = Math.floor(Math.random() * parameterBlink.length);
+            const parameter = parameterBlink[randomNumber];
+            if (currentVrm) {  
+                currentVrm.expressionManager.setValue("blink", 0);
+                currentVrm.expressionManager.setValue("blinkLeft", 0);
+                currentVrm.expressionManager.setValue("blinkRight", 0);
+            }
+        }
+
+        animate();
+        function animate() {
+
+
+            setTimeout(() => {
+                animate();
+            }, speedAnimate * 1000)
+
+            // let mixerUpdateDelta = clock.getDelta();
+
+            let time = new Date().getTime();
+            renderer.render(scene, camera);
+
+            if (mixer) mixer.update(speedAnimate * ratioAnimate);
+
+            if (joinSpringManager) joinSpringManager.update(10 / 1000);
+
+            if (currentVrm && currentVrm.expressionManager) {
+                currentVrm.expressionManager.update();
+            }
+
+        }
+    </script>
+    <script>
+
+    </script>
+</body>
+
+</html>
